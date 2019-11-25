@@ -17,7 +17,9 @@ public class ImageExploder {
 	static Path fileInput;
 	static Path fileOutput;
 	static int ratio = 2;
+	static int range = 1;
 	static boolean starLines = false;
+	static int weightScale = 1;
 	
 	public static void main(String[] args) {
 		if (args.length == 0) {
@@ -40,6 +42,14 @@ public class ImageExploder {
 			else if (args[index].equals("-s")) {
 				starLines = true;
 			}
+			else if (args[index].equals("-p")) {
+				index++;
+				range = Integer.parseInt(args[index]);
+			}
+			else if (args[index].equals("-w")) {
+				index++;
+				weightScale = Integer.parseInt(args[index]);
+			}
 			index++;
 		}
 		
@@ -52,7 +62,7 @@ public class ImageExploder {
 		try {
 			File input = fileInput.toFile();
 			BufferedImage image = ImageIO.read(input);
-			int[][] pixelArray = getPixelArray(image);
+			Pixel[][] pixelArray = getPixelArray(image);
 			
 			int oldWidth = image.getWidth();
 			int oldHeight = image.getHeight();
@@ -60,11 +70,18 @@ public class ImageExploder {
 			int newWidth = image.getWidth() * ratio - ratio + 1;
 			int newHeight = image.getHeight() * ratio - ratio + 1;
 			
-			int[][] newImageArray = new int[newHeight][newWidth];
+			Pixel[][] newImageArray = new Pixel[newHeight][newWidth];
 			
-			for (int y = 0; y < oldHeight - 1; y++) {
-				for (int x = 0; x < oldWidth - 1; x++) {
-					buildSquare(pixelArray, newImageArray, x, y);
+			for (int y = 0; y < oldHeight; y++) {
+				for (int x = 0; x < oldWidth; x++) {
+					newImageArray[y * ratio][x * ratio] = pixelArray[y][x];
+				}
+			}
+			
+			for (int y = 0; y < oldHeight; y++) {
+				System.out.println("Building squares, row " + (y + 1) + " of " + oldHeight);
+				for (int x = 0; x < oldWidth; x++) {
+					buildSquare(newImageArray, x, y);
 				}
 			}
 			BufferedImage newImage = setPixelArray(newImageArray, image.getType());
@@ -85,21 +102,21 @@ public class ImageExploder {
 		
 	}
 	
-	private static int[][] getPixelArray(BufferedImage image) {
+	private static Pixel[][] getPixelArray(BufferedImage image) {
 		int width = image.getWidth();
 		int height = image.getHeight();
 		
-		int[][] array = new int[height][width];
+		Pixel[][] array = new Pixel[height][width];
 		
 		for (int y = 0; y < height; y++) {
 			for (int x = 0; x < width; x++) {
-				array[y][x] = image.getRGB(x, y);
+				array[y][x] = new Pixel(x * ratio, y * ratio, new Color(image.getRGB(x, y)));
 			}
 		}
 		return array;
 	}
 	
-	private static BufferedImage setPixelArray(int[][] array, int imageType) {
+	private static BufferedImage setPixelArray(Pixel[][] array, int imageType) {
 		int height = array.length;
 		int width = array[0].length;
 		
@@ -107,7 +124,7 @@ public class ImageExploder {
 		
 		for (int y = 0; y < height; y++) {
 			for (int x = 0; x < width; x++) {
-				image.setRGB(x, y, array[y][x]);
+				image.setRGB(x, y, array[y][x].getColor().getRGB());
 			}
 		}
 		
@@ -115,102 +132,53 @@ public class ImageExploder {
 		
 	}
 	
-	private static void buildSquare(int[][] oldArray, int[][] newArray, int x, int y) {
+	private static void buildSquare(Pixel[][] newArray, int x, int y) {
 		
 		int yRatio = y * ratio;
 		int xRatio = x * ratio;
+		List<Pixel> squareList = new ArrayList<>();
 		
-		newArray[yRatio][xRatio] = oldArray[y][x];
-		newArray[yRatio + ratio][xRatio] = oldArray[y + 1][x];
-		newArray[yRatio][xRatio + ratio] = oldArray[y][x + 1];
-		newArray[yRatio + ratio][xRatio + ratio] = oldArray[y + 1][x + 1];
+		for (int yPos = -range; yPos <= range + 1; yPos++) {
+			for (int xPos = -range; xPos <= range + 1; xPos++) {
+				if (!(yRatio + yPos * ratio  < 0) && !(yRatio + yPos * ratio > newArray.length) && !(xRatio + xPos * ratio  < 0) && !(xRatio + xPos * ratio > newArray[0].length)) {
+					squareList.add(newArray[yRatio + yPos * ratio][xRatio + xPos * ratio]);
+				}
+			}
+		}
 		
-		for (int yPos = 1; yPos < ratio; yPos++) {
-			for (int xPos = 1; xPos < ratio; xPos++) {
-				float[] distList = getDistList2d(xPos, yPos);
-				newArray[yRatio + yPos][xRatio + xPos] = getAverageColor(
-					new int[] {
-						newArray[yRatio][xRatio], 
-						newArray[yRatio + ratio][xRatio],
-						newArray[yRatio][xRatio + ratio],
-						newArray[yRatio + ratio][xRatio + ratio]
-					},
-					distList);
+		for (int yPos = 0; yPos < ratio; yPos++) {
+			for (int xPos = 0; xPos < ratio; xPos++) {
+				if (!(xPos == 0 && yPos == 0) && !(xRatio + xPos >= newArray[0].length) && !(yRatio + yPos >= newArray.length)) {
+					float[] distList = new float[squareList.size()];
+					Pixel averagePixel = new Pixel(xRatio + xPos, yRatio + yPos, new Color(0));
+					for (int z = 0; z < squareList.size(); z++) {
+						distList[z] = averagePixel.getDist(squareList.get(z));
+					}
+					newArray[yRatio + yPos][xRatio + xPos] = new Pixel(xRatio + xPos, yRatio + yPos, averageColor(squareList, distList));
+				}
 			}
 		}
 		
 		if (starLines) {
 			drawStarLines(newArray, xRatio, yRatio);
 		}
-		else {
+	}
+	
+	private static void drawStarLines(Pixel[][] newArray, int xRatio, int yRatio) {
+		if (yRatio != newArray.length - 1 && xRatio != newArray[0].length - 1) {
+			List<Pixel> horizontalList = new ArrayList<>();
+			horizontalList.add(newArray[yRatio][xRatio]);
+			horizontalList.add(newArray[yRatio][xRatio + ratio]);
+			
+			List<Pixel> verticalList = new ArrayList<>();
+			verticalList.add(newArray[yRatio][xRatio]);
+			verticalList.add(newArray[yRatio + ratio][xRatio]);
+			
 			for (int z = 1; z < ratio; z++) {
-				float[] distList = getDistList1d(z);
-				buildHorizontalPixel(newArray, xRatio, yRatio, z, distList);
-				buildHorizontalPixel(newArray, xRatio, yRatio + ratio, z, distList);
-				buildVerticalPixel(newArray, xRatio, yRatio, z, distList);
-				buildVerticalPixel(newArray, xRatio + ratio, yRatio, z, distList);
+				float[] distList = getDistListStarLine(z);
+				newArray[yRatio + z][xRatio] = new Pixel(xRatio, yRatio + z, averageColor(verticalList, distList));
+				newArray[yRatio][xRatio + z] = new Pixel(xRatio + z, yRatio, averageColor(horizontalList, distList));
 			}
-		}
-		
-	}
-	
-	private static void buildHorizontalPixel(int[][] newArray, int x, int y, int z, float[] distList) {
-		boolean top = true;
-		boolean bottom = true;
-		
-		if (y == 0) {
-			top = false;
-		}
-		else if (y == newArray.length - 1) {
-			bottom = false;
-		}
-		
-		int[] valList;
-		if (top && bottom) {
-			valList = new int[] {newArray[y][x], newArray[y][x + ratio], newArray[y - 1][x + z], newArray[y + 1][x + z]};
-		}
-		else if (top) {
-			valList = new int[] {newArray[y][x], newArray[y][x + ratio], newArray[y - 1][x + z]};
-		}
-		else {
-			valList = new int[] {newArray[y][x], newArray[y][x + ratio], newArray[y + 1][x + z]};
-		}
-		
-		newArray[y][x + z] = getAverageColor(valList, distList);
-	}
-	
-	private static void buildVerticalPixel(int[][] newArray, int x, int y, int z, float[] distList) {
-		boolean left = true;
-		boolean right = true;
-		
-		if (x == 0) {
-			left = false;
-		}
-		else if (x == newArray[0].length - 1) {
-			right = false;
-		}
-		
-		int[] valList;
-		if (left && right) {
-			valList = new int[] {newArray[y][x], newArray[y + ratio][x], newArray[y + z][x - 1], newArray[y + z][x + 1]};
-		}
-		else if (left) {
-			valList = new int[] {newArray[y][x], newArray[y + ratio][x], newArray[y + z][x - 1]};
-		}
-		else {
-			valList = new int[] {newArray[y][x], newArray[y + ratio][x], newArray[y + z][x + 1]};
-		}
-		
-		newArray[y + z][x] = getAverageColor(valList, distList);
-	}
-	
-	private static void drawStarLines(int[][] newArray, int xRatio, int yRatio) {
-		for (int z = 1; z < ratio; z++) {
-			float[] distList = getDistListStarLine(z);
-			newArray[yRatio + z][xRatio] = getAverageColor(new int[] {newArray[yRatio][xRatio], newArray[yRatio + ratio][xRatio]}, distList);
-			newArray[yRatio + z][xRatio + ratio] = getAverageColor(new int[] {newArray[yRatio][xRatio + ratio], newArray[yRatio + ratio][xRatio + ratio]}, distList);
-			newArray[yRatio][xRatio + z] = getAverageColor(new int[] {newArray[yRatio][xRatio], newArray[yRatio][xRatio + ratio]}, distList);
-			newArray[yRatio + ratio][xRatio + z] = getAverageColor(new int[] {newArray[yRatio + ratio][xRatio], newArray[yRatio + ratio][xRatio + ratio]}, distList);
 		}
 	}
 	
@@ -221,60 +189,38 @@ public class ImageExploder {
 		return distList;
 	}
 	
-	private static float[] getDistList1d(int x) {
-		float[] distList = new float[4];
-		distList[0] = getDist1d(0, x);
-		distList[1] = getDist1d(ratio, x);
-		distList[2] = 1;
-		distList[3] = 1;
-		return distList;
-	}
-	
-	private static float[] getDistList2d(int x, int y) {
-		float[] distList = new float[4];
-		distList[0] = getDist(0, 0, x, y);
-		distList[1] = getDist(0, ratio, x, y);
-		distList[2] = getDist(ratio, 0, x, y);
-		distList[3] = getDist(ratio, ratio, x, y);
-		return distList;
-	}
-	
 	private static float getDist1d(float x, float targetX) {
 		return (float) Math.abs(x - targetX);
-	}
-	
-	private static float getDist(float x, float y, float targetX, float targetY) {
-		return (float) Math.sqrt(Math.pow(x - targetX, 2) + Math.pow(y - targetY, 2));
-	}
-	
-	private static int getAverageColor(int[] colorVal, float[] dist) {
-		List<Color> colors = new ArrayList<>();
-		for (int x = 0; x < colorVal.length; x++) {
-			colors.add(new Color(colorVal[x]));
-		}
-		int averageColor = averageColor(colors, dist);
-		
-		return averageColor;
 	}
 	
 	private static int weightedAverage(List<Integer> values, float[] dist) {
 		float distSum = 0;
 		float weightSum = 0;
 		for (int x = 0; x < values.size(); x++) {
-			distSum += 1 / dist[x];
-			weightSum += values.get(x) / dist[x];
+			if (weightScale != 1) {
+				distSum += 1 / Math.pow(dist[x], weightScale);
+				weightSum += values.get(x) / Math.pow(dist[x], weightScale);
+			}
+			else {
+				distSum += 1 / dist[x];
+				weightSum += values.get(x) / dist[x];
+			}
 		}
 		return Math.round(weightSum / distSum);
 	}
 	
-	private static int averageColor(List<Color> colors, float[] dist) {
-		int averageRed = weightedAverage(colors.stream().map(Color::getRed).collect(Collectors.toList()), dist);
-		int averageBlue = weightedAverage(colors.stream().map(Color::getBlue).collect(Collectors.toList()), dist);
-		int averageGreen = weightedAverage(colors.stream().map(Color::getGreen).collect(Collectors.toList()), dist);
-		int averageAlpha = weightedAverage(colors.stream().map(Color::getAlpha).collect(Collectors.toList()), dist);
+	private static Color averageColor(List<Pixel> colors, float[] dist) {
+		int averageRed = weightedAverage(
+				colors.stream().map(Pixel::getColor).map(Color::getRed).collect(Collectors.toList()), dist);
+		int averageBlue = weightedAverage(
+				colors.stream().map(Pixel::getColor).map(Color::getBlue).collect(Collectors.toList()), dist);
+		int averageGreen = weightedAverage(
+				colors.stream().map(Pixel::getColor).map(Color::getGreen).collect(Collectors.toList()), dist);
+		int averageAlpha = weightedAverage(
+				colors.stream().map(Pixel::getColor).map(Color::getAlpha).collect(Collectors.toList()), dist);
 		
 		Color averageColor = new Color(averageRed, averageGreen, averageBlue, averageAlpha);
-		return averageColor.getRGB();
+		return averageColor;
 	}
 	
 }
